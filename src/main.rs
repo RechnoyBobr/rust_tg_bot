@@ -1,84 +1,77 @@
 use teloxide::{
-    dispatching::dialogue::{
-        serializer::{Bincode, Json},
-        ErasedStorage, RedisStorage, Storage,
+    dispatching::{
+        dialogue::{
+            serializer::{Bincode, Json},
+            ErasedStorage, RedisStorage, Storage,
+        },
+        UpdateFilterExt,
     },
     prelude::*,
-    utils::command::BotCommands,
+    utils::command::{self, BotCommands},
 };
-
-type MyStorage = std::sync::Arc<ErasedStorage<Question>>;
 
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    log::info!("Test kurwa bober");
-    // let storage: MyStorage = RedisStorage::open("redis://127.0.0.1:6379", Bincode)
-    //    .await
-    //    .unwrap()
-    //    .erase();
+    log::info!("Starting bot..");
     let bot = Bot::from_env();
-    Command::repl(bot, answer).await;
-}
-#[derive(Clone, Default)]
-pub enum State {
-    #[default]
-    Idle,
-    Start,
-    AskInit,
-    RecieveQuestion {
-        question: String,
-    },
-}
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct Question {
-    question: String,
-    chat: i64,
-    username: String,
-}
-
-#[derive(Clone, BotCommands)]
-#[command(
-    rename_rule = "lowercase",
-    description = "These commands are supported!"
-)]
-enum Command {
-    #[command(description = "Start the bot")]
-    Start,
-    #[command(description = "Все доступные боту комманды")]
-    Help,
-    #[command(description = "handle question")]
-    Ask(String),
-    #[command(description = "Test command", parse_with = "split")]
-    UsernameAndAge { username: String, age: u8 },
-}
-
-async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
-    match cmd {
-        Command::Start => bot.send_message(msg.chat.id, "Hello from MSK").await?,
-        Command::Help => {
-            bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                .await?
-        }
-        Command::Ask(quest) => match std::env::var("ID") {
-            Ok(val) => {
-                let id = ChatId(val.trim().parse().expect("PASHOL NAH"));
-                bot.send_message(id, format!("ТЕБЕ ПРИСЛАЛИ СТРАШНОЕ СООБЩЕНИЕ!!!! {quest}"))
-                    .await?
-            }
-            Err(err) => {
-                println!("Fuck: {err}");
-                bot.send_message(msg.chat.id, "There is an internal error on the server")
-                    .await?
-            }
-        },
-        Command::UsernameAndAge { username, age } => {
-            bot.send_message(
-                msg.chat.id,
-                format!("Your username is {username} and age is {age}."),
-            )
-            .await?
-        }
+    let params = ConfigParameters {
+        bot_owner: UserId(0),
+        owner_username: None,
     };
+    // TODO: dispatching
+    let handler = Update::filter_message().branch(dptree);
+}
+
+#[derive(Clone)]
+struct ConfigParameters {
+    bot_owner: UserId,
+    owner_username: Option<String>,
+}
+
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase")]
+enum SimpleCommands {
+    Start,
+    Ask,
+    Show,
+    Answer,
+    Next,
+    Previous,
+    Load,
+}
+
+async fn command_handler(
+    cfg: ConfigParameters,
+    bot: Bot,
+    me: teloxide::types::Me,
+    msg: Message,
+    cmd: SimpleCommands,
+) -> Result<(), teloxide::RequestError> {
+    if msg.from().unwrap().id == cfg.bot_owner {
+        let text = match cmd {
+            SimpleCommands::Start => "Shpradfksdjfkljbj",
+            SimpleCommands::Ask => "Ты не можешь этого XD",
+            SimpleCommands::Show => "to be continued",
+            SimpleCommands::Next => "load next",
+            SimpleCommands::Load => "Loading more",
+            SimpleCommands::Answer => "Answer ze question",
+            SimpleCommands::Previous => "Loading Previous",
+        };
+
+        bot.send_message(msg.chat.id, text).await?;
+    } else {
+        let text = match cmd {
+            SimpleCommands::Start => "Shpradfksdjfkljbj",
+            SimpleCommands::Ask => "Спрашивай",
+            SimpleCommands::Show => "не-а",
+            SimpleCommands::Next => "не-а",
+            SimpleCommands::Load => "не-а",
+            SimpleCommands::Answer => "не-а",
+            SimpleCommands::Previous => "не-а",
+        };
+        bot.send_message(msg.chat.id, text).await?;
+    }
+    // TODO: Дописать
     Ok(())
 }
