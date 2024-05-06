@@ -1,14 +1,24 @@
+// TODO: GLOBAL:
+// Show state should receieve vector of questions.
+// Fetch only 10 questions from redis with date sorting from old to new;
+// Make tests? Test sql queries for possible sql injection
+// And of course: BUTTONS
+
 use teloxide::{
     dispatching::{
         dialogue::{
             serializer::{Bincode, Json},
-            ErasedStorage, RedisStorage, Storage,
+            ErasedStorage, InMemStorage, RedisStorage, Storage,
         },
-        UpdateFilterExt,
+        HandlerExt, UpdateFilterExt,
     },
     prelude::*,
+    types::User,
     utils::command::{self, BotCommands},
 };
+mod funcs;
+
+type SimpleDialouge = Dialogue<State, InMemStorage<State>>;
 
 #[tokio::main]
 async fn main() {
@@ -16,11 +26,47 @@ async fn main() {
     log::info!("Starting bot..");
     let bot = Bot::from_env();
     let params = ConfigParameters {
-        bot_owner: UserId(0),
+        // TODO: get UserId from environment variable. (Don't forget about Docker).
+        bot_owner: UserId(471831737),
         owner_username: None,
     };
-    // TODO: dispatching
-    let handler = Update::filter_message().branch(dptree);
+    funcs::connect_to_db("redis://127.0.0.1:6379/");
+    let handler = Update::filter_message()
+        .branch(dptree::case![State::Show { array, cur }].endpoint(fetch_questions))
+        .branch(dptree::case![State::StartQuest].endpoint(receive_question))
+        .branch(dptree::case![State::StartAns].endpoint(receive_answer))
+        .branch(dptree::case![State::ReceiveQuest { tg_id, id }].endpoint(handle_question))
+        .branch(dptree::case![State::ReceiveAns { to }].endpoint(handle_answer))
+        .branch(
+            dptree::filter(|cfg: ConfigParameters, msg: Message| {
+                msg.from()
+                    .map(|user| user.id == cfg.bot_owner)
+                    .unwrap_or_default()
+            })
+            .filter_command::<AdminCommands>()
+            .endpoint(admin_command_handler),
+        )
+        .branch(
+            dptree::filter(|cfg: ConfigParameters, msg: Message| {
+                msg.from()
+                    .map(|user| user.id != cfg.bot_owner)
+                    .unwrap_or_default()
+            })
+            .filter_command::<UserCommands>()
+            .endpoint(user_command_handler),
+        );
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![params])
+        .default_handler(|upd| async move {
+            log::warn!("Unhandled update: {:?}", upd);
+        })
+        .error_handler(LoggingErrorHandler::with_custom_text(
+            "An error has occurred in the dispatcher",
+        ))
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
 
 #[derive(Clone)]
@@ -31,47 +77,130 @@ struct ConfigParameters {
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
-enum SimpleCommands {
+enum UserCommands {
     Start,
-    Ask,
-    Show,
-    Answer,
-    Next,
-    Previous,
-    Load,
+    AskStart,
 }
 
-async fn command_handler(
-    cfg: ConfigParameters,
-    bot: Bot,
-    me: teloxide::types::Me,
-    msg: Message,
-    cmd: SimpleCommands,
-) -> Result<(), teloxide::RequestError> {
-    if msg.from().unwrap().id == cfg.bot_owner {
-        let text = match cmd {
-            SimpleCommands::Start => "Shpradfksdjfkljbj",
-            SimpleCommands::Ask => "Ты не можешь этого XD",
-            SimpleCommands::Show => "to be continued",
-            SimpleCommands::Next => "load next",
-            SimpleCommands::Load => "Loading more",
-            SimpleCommands::Answer => "Answer ze question",
-            SimpleCommands::Previous => "Loading Previous",
-        };
+#[derive(Clone, Default)]
+pub enum State {
+    #[default]
+    Start,
+    StartQuest,
+    StartAns,
+    Show {
+        array: Vec<funcs::Question>,
+        cur: u64,
+    },
+    ReceiveQuest {
+        tg_id: String,
+        id: u64,
+    },
+    ReceiveAns {
+        to: u64,
+    },
+}
 
-        bot.send_message(msg.chat.id, text).await?;
-    } else {
-        let text = match cmd {
-            SimpleCommands::Start => "Shpradfksdjfkljbj",
-            SimpleCommands::Ask => "Спрашивай",
-            SimpleCommands::Show => "не-а",
-            SimpleCommands::Next => "не-а",
-            SimpleCommands::Load => "не-а",
-            SimpleCommands::Answer => "не-а",
-            SimpleCommands::Previous => "не-а",
-        };
-        bot.send_message(msg.chat.id, text).await?;
-    }
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase")]
+enum AdminCommands {
+    Start,
+    Load,
+    Previous,
+    Next,
+    AnswerStart,
+}
+
+async fn user_command_handler(
+    bot: Bot,
+    msg: Message,
+    dialogue: SimpleDialouge,
+    cmd: UserCommands,
+) -> Result<(), teloxide::RequestError> {
+    let text = match cmd {
+        UserCommands::Start => "Shpradfksdjfkljbj",
+        UserCommands::AskStart => {
+            dialogue.update(State::StartQuest).await.unwrap();
+            "Спрашивай"
+        }
+    };
+    bot.send_message(msg.chat.id, text).await?;
     // TODO: Дописать
+    Ok(())
+}
+
+async fn admin_command_handler(
+    bot: Bot,
+    msg: Message,
+    dialogue: SimpleDialouge,
+    cmd: AdminCommands,
+) -> Result<(), teloxide::RequestError> {
+    let text = match cmd {
+        AdminCommands::Start => "Добро пожаловать",
+        AdminCommands::Load => {
+            // get_Comments()
+            "..."
+        }
+        AdminCommands::Next => {
+            // next()
+            "... next"
+        }
+        AdminCommands::AnswerStart => "Напишите ответ:",
+        AdminCommands::Previous => {
+            // get_previous()
+            "..."
+        }
+    };
+    bot.send_message(msg.chat.id, text).await?;
+    Ok(())
+}
+
+async fn handle_question(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    (question, tg_id, id): (String, String, u8),
+    msg: Message,
+) -> Result<(), teloxide::RequestError> {
+    // TODO: finish writing
+    Ok(())
+}
+
+async fn fetch_questions(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    (question, tg_id, id): (String, String, u8),
+    msg: Message,
+) -> Result<(), teloxide::RequestError> {
+    Ok(())
+}
+
+async fn handle_answer(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    to: u64,
+    msg: Message,
+) -> Result<(), teloxide::RequestError> {
+    // WARN: Maybe variables from state would not work
+    bot.send_message(msg.chat.id, "Ваш ответ отправлен");
+    let id = teloxide::types::UserId(to);
+    bot.send_message(id, "Вам");
+    Ok(())
+}
+async fn receive_answer(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    msg: Message,
+) -> Result<(), teloxide::RequestError> {
+    dialogue.update(State::ReceiveAns { to: 0 }).await.unwrap();
+    bot.send_message(msg.chat.id, "Ответьте в сообщении ниже:")
+        .await?;
+    Ok(())
+}
+
+async fn receive_question(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    msg: Message,
+) -> Result<(), teloxide::RequestError> {
     Ok(())
 }

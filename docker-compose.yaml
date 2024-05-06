@@ -2,22 +2,20 @@ services:
   rust_bot:
     build: ./
     networks:
-    - redis_nw
+      - redis_nw
   redis:
     image: redis:latest-alpine
-    ports: 
+    ports:
       - "6379:6379"
     networks:
       - redis_nw
     volumes:
-      - /home/ilya/rust_tg_bot/redis-data/:/root/redis
+      - ./redis-data/:/root/redis
     environment:
       - REDIS_PORT=6379
       - REDIS_PASSWORD="example"
       - REDIS_DATABASES=1
 
-
 networks:
   redis_nw:
-    driver:
-      bridge
+    driver: bridge

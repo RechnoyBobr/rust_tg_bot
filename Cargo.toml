@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+redis = { version = "0.25.3", features = ["tokio-comp"] }
 teloxide = { version = "0.12", features = [
   "macros",
   "redis-storage",
@@ -15,6 +16,7 @@ serde = "1.0"
 log = "0.4"
 pretty_env_logger = "0.4"
 tokio = { version = "1.8", features = ["rt-multi-thread", "macros"] }
+serde_json = "1.0"
 
 [alias]
 ID = "328277442"
