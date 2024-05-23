@@ -124,7 +124,7 @@ async fn user_command_handler(
         UserCommands::Start => "Shpradfksdjfkljbj",
         UserCommands::AskStart => {
             dialogue.update(State::StartQuest).await.unwrap();
-            "Спрашивай"
+            "Задайте ваш вопрос"
         }
     };
     bot.send_message(msg.chat.id, text).await?;
