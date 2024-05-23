@@ -4,6 +4,7 @@
 // Make tests? Test sql queries for possible sql injection
 // And of course: BUTTONS
 
+use funcs::Question;
 use teloxide::{
     dispatching::{
         dialogue::{
@@ -26,7 +27,8 @@ async fn main() {
     log::info!("Starting bot..");
     let bot = Bot::from_env();
     let params = ConfigParameters {
-        // TODO: get UserId from environment variable. (Don't forget about Docker).
+        // TODO: get UserId from environment variable. (Don't forget about Docker). Use docker
+        // secrets.
         bot_owner: UserId(471831737),
         owner_username: None,
     };
@@ -90,7 +92,7 @@ pub enum State {
     StartAns,
     Show {
         array: Vec<funcs::Question>,
-        cur: u64,
+        cur: usize,
     },
     ReceiveQuest {
         tg_id: String,
@@ -99,6 +101,7 @@ pub enum State {
     ReceiveAns {
         to: u64,
     },
+    BogusState,
 }
 
 #[derive(BotCommands, Clone)]
@@ -177,13 +180,32 @@ async fn fetch_questions(
 async fn handle_answer(
     bot: Bot,
     dialogue: SimpleDialouge,
-    to: u64,
     msg: Message,
 ) -> Result<(), teloxide::RequestError> {
     // WARN: Maybe variables from state would not work
-    bot.send_message(msg.chat.id, "Ваш ответ отправлен");
+    bot.send_message(msg.chat.id, "Ваш ответ отправлен").await?;
+    let state = match dialogue.get().await {
+        Ok(s) => s.unwrap(),
+        Err(e) => {
+            println!("There is an error, probably because of wrong state");
+            State::BogusState
+        }
+    };
+    let to_maybe = match state {
+        State::ReceiveAns { to } => Some(to),
+        _ => None,
+    };
+    let to = match to_maybe {
+        Some(t) => t,
+        None => {
+            println!("There is an error because of the wrong state");
+            0
+        }
+    };
     let id = teloxide::types::UserId(to);
-    bot.send_message(id, "Вам");
+    bot.send_message(id, "Вам пришёл ответ на ваше сообщение:")
+        .await?;
+    bot.send_message(id, msg.text().unwrap()).await?;
     Ok(())
 }
 async fn receive_answer(
@@ -191,9 +213,36 @@ async fn receive_answer(
     dialogue: SimpleDialouge,
     msg: Message,
 ) -> Result<(), teloxide::RequestError> {
-    dialogue.update(State::ReceiveAns { to: 0 }).await.unwrap();
-    bot.send_message(msg.chat.id, "Ответьте в сообщении ниже:")
-        .await?;
+    let cur_state = match dialogue.get().await {
+        Ok(s) => s.unwrap_or(State::BogusState),
+        Err(e) => State::BogusState,
+    };
+    let question = match cur_state {
+        State::Show { array, cur } => Some(array[cur].clone()),
+        _ => None,
+    };
+    let id = match question {
+        Some(q) => q.id,
+        None => {
+            println!("Invalid state!!");
+            0
+        }
+    };
+
+    let res = dialogue.update(State::ReceiveAns { to: id }).await;
+    match res {
+        Ok(s) => {
+            bot.send_message(msg.chat.id, "Ответьте в сообщении ниже:")
+                .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                "Внутренняя ошибка, обратитесь к разрабу. Он еблан.",
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
