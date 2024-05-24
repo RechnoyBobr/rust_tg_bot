@@ -13,7 +13,7 @@ use teloxide::{
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Question {
     pub question: String,
-    pub id: u64,
+    pub id: i64,
     pub tg_id: String,
 }
 type QuestStorage = std::sync::Arc<ErasedStorage<Question>>;

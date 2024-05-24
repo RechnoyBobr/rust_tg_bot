@@ -6,20 +6,57 @@
 
 use funcs::Question;
 use teloxide::{
-    dispatching::{
-        dialogue::{
-            serializer::{Bincode, Json},
-            ErasedStorage, InMemStorage, RedisStorage, Storage,
-        },
-        HandlerExt, UpdateFilterExt,
-    },
+    dispatching::{dialogue::InMemStorage, HandlerExt, UpdateFilterExt},
     prelude::*,
-    types::User,
-    utils::command::{self, BotCommands},
+    utils::command::BotCommands,
 };
 mod funcs;
 
 type SimpleDialouge = Dialogue<State, InMemStorage<State>>;
+
+#[derive(Clone)]
+struct ConfigParameters {
+    bot_owner: UserId,
+    owner_username: Option<String>,
+}
+
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase")]
+enum UserCommands {
+    Start,
+    AskStart,
+}
+
+#[derive(Clone, Default)]
+pub enum State {
+    #[default]
+    Start,
+    StartQuest,
+    StartAns,
+    Show {
+        array: Vec<Question>,
+        cur: usize,
+    },
+    ReceiveQuest {
+        tg_id: String,
+        id: i64,
+    },
+    ReceiveAns {
+        to: i64,
+    },
+    BogusState,
+}
+
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase")]
+enum AdminCommands {
+    Start,
+    Load,
+    Show,
+    Previous,
+    Next,
+    AnswerStart,
+}
 
 #[tokio::main]
 async fn main() {
@@ -34,6 +71,7 @@ async fn main() {
     };
     funcs::connect_to_db("redis://127.0.0.1:6379/");
     let handler = Update::filter_message()
+        .enter_dialogue::<Message, InMemStorage<State>, State>()
         .branch(dptree::case![State::Show { array, cur }].endpoint(fetch_questions))
         .branch(dptree::case![State::StartQuest].endpoint(receive_question))
         .branch(dptree::case![State::StartAns].endpoint(receive_answer))
@@ -58,7 +96,7 @@ async fn main() {
             .endpoint(user_command_handler),
         );
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![params])
+        .dependencies(dptree::deps![params, InMemStorage::<State>::new()])
         .default_handler(|upd| async move {
             log::warn!("Unhandled update: {:?}", upd);
         })
@@ -69,49 +107,6 @@ async fn main() {
         .build()
         .dispatch()
         .await;
-}
-
-#[derive(Clone)]
-struct ConfigParameters {
-    bot_owner: UserId,
-    owner_username: Option<String>,
-}
-
-#[derive(BotCommands, Clone)]
-#[command(rename_rule = "lowercase")]
-enum UserCommands {
-    Start,
-    AskStart,
-}
-
-#[derive(Clone, Default)]
-pub enum State {
-    #[default]
-    Start,
-    StartQuest,
-    StartAns,
-    Show {
-        array: Vec<funcs::Question>,
-        cur: usize,
-    },
-    ReceiveQuest {
-        tg_id: String,
-        id: u64,
-    },
-    ReceiveAns {
-        to: u64,
-    },
-    BogusState,
-}
-
-#[derive(BotCommands, Clone)]
-#[command(rename_rule = "lowercase")]
-enum AdminCommands {
-    Start,
-    Load,
-    Previous,
-    Next,
-    AnswerStart,
 }
 
 async fn user_command_handler(
@@ -138,8 +133,23 @@ async fn admin_command_handler(
     dialogue: SimpleDialouge,
     cmd: AdminCommands,
 ) -> Result<(), teloxide::RequestError> {
+    let simpleQuest = Question {
+        question: String::from("DAun"),
+        id: 123123,
+        tg_id: String::from("boba_kurwa"),
+    };
     let text = match cmd {
         AdminCommands::Start => "Добро пожаловать",
+        AdminCommands::Show => {
+            // TODO: load array of messages
+            dialogue
+                .update(State::Show {
+                    array: std::vec![simpleQuest],
+                    cur: 0,
+                })
+                .await;
+            "Gooidaaa"
+        }
         AdminCommands::Load => {
             // get_Comments()
             "..."
@@ -195,17 +205,16 @@ async fn handle_answer(
         State::ReceiveAns { to } => Some(to),
         _ => None,
     };
-    let to = match to_maybe {
+    let id = match to_maybe {
         Some(t) => t,
         None => {
             println!("There is an error because of the wrong state");
             0
         }
     };
-    let id = teloxide::types::UserId(to);
-    bot.send_message(id, "Вам пришёл ответ на ваше сообщение:")
+    bot.send_message(ChatId(id), "Вам пришёл ответ на ваше сообщение:")
         .await?;
-    bot.send_message(id, msg.text().unwrap()).await?;
+    bot.send_message(ChatId(id), msg.text().unwrap()).await?;
     Ok(())
 }
 async fn receive_answer(
@@ -251,5 +260,15 @@ async fn receive_question(
     dialogue: SimpleDialouge,
     msg: Message,
 ) -> Result<(), teloxide::RequestError> {
+    let text = msg.text().unwrap();
+    // TODO: send message to redis;
+    dialogue
+        .update(State::ReceiveQuest {
+            tg_id: msg.from().unwrap().username.clone().unwrap(),
+            id: msg.chat.id.0,
+        })
+        .await;
+    bot.send_message(msg.chat.id, msg.from().unwrap().username.clone().unwrap())
+        .await?;
     Ok(())
 }
