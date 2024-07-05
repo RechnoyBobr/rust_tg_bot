@@ -1,5 +1,8 @@
-use redis::Commands;
-use redis::{Connection, RedisResult};
+use futures::stream::TryStreamExt;
+use mongodb::{
+    bson::{doc, DateTime, Document},
+    options::FindOptions,
+};
 use serde::{Deserialize, Serialize};
 use teloxide::{
     dispatching::dialogue::{
@@ -10,28 +13,38 @@ use teloxide::{
     utils::command::BotCommands,
 };
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Question {
     pub question: String,
     pub id: i64,
     pub tg_id: String,
+    pub answered: bool,
+    pub upload_time: DateTime,
 }
 type QuestStorage = std::sync::Arc<ErasedStorage<Question>>;
 
-pub async fn load_questions(quantity: u8) {
-    // TODO: Write all useful functions for fethcing questions and handling them from Redis
-    // WARN: Be careful with ownership and return results. Don't forget to check them. Avoid unsafe
-    // code
-}
-pub fn upload_question(
-    con: &mut Connection,
-    question: Question,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let serialized = serde_json::to_string(&question).unwrap();
-    let _: () = con.set(question.tg_id, serialized)?;
+pub async fn load_questions(
+    quantity: u8,
+    collection: mongodb::Collection<Question>,
+    res: &mut Vec<Question>,
+) -> std::result::Result<(), mongodb::error::Error> {
+    let filter = doc! {"answered": false};
+    let filter_options = FindOptions::builder().sort(doc! {"answered": 1}).build();
+    let mut doc_ptr = collection.find(filter, filter_options).await?;
+    let mut cnt = 0;
+    while let Some(quest) = doc_ptr.try_next().await? {
+        if cnt == quantity {
+            break;
+        }
+        res.push(quest);
+        cnt += 1;
+    }
     Ok(())
 }
-
-pub fn connect_to_db(url: &str) -> redis::Client {
-    redis::Client::open(url).unwrap()
+pub async fn upload_question(
+    question: Question,
+    collection: mongodb::Collection<Question>,
+) -> Result<(), mongodb::error::Error> {
+    collection.insert_one(question, None).await?;
+    Ok(())
 }

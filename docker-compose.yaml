@@ -1,21 +1,25 @@
 services:
   rust_bot:
     build: ./
-    networks:
-      - redis_nw
-  redis:
-    image: redis:latest-alpine
-    ports:
-      - "6379:6379"
-    networks:
-      - redis_nw
-    volumes:
-      - ./redis-data/:/root/redis
-    environment:
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD="example"
-      - REDIS_DATABASES=1
 
-networks:
-  redis_nw:
-    driver: bridge
+  mongdob:
+    image: mongo
+    container_name: mongodb
+    restart: always
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: $MONGODB_USERNAME
+      MONGODB_INITDB_ROOT_PASSWORD: $MONGODB_PASSWORD
+      MONGODB_INITDB_DATABASE: main
+    ports:
+      - 27017:27017
+
+  mongodb_seed:
+    image: mongo
+    container_name: mongodb-seed
+    depends_on:
+      - mongodb
+    volumes:
+      - ./mongodb-init:/mongodb-init
+    links:
+      - mongodb
+    command: mongoimport --host mongodb --db main --collection questions --authenticatonDatabase admin --username $MONGODB_USERNAME --password $MONGODB_PASSWORD --drop --jsonArray --file /mongodb-init/init.json

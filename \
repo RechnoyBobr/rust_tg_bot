@@ -4,6 +4,7 @@
 // Make tests? Test sql queries for possible sql injection
 // And of course: BUTTONS
 
+use chrono::Utc;
 use funcs::{load_questions, upload_question, Question};
 use mongodb::{bson::DateTime, Client, Collection};
 use teloxide::{
@@ -70,11 +71,6 @@ async fn main() {
     let mongodb_client = Client::with_uri_str(mongodb_uri).await.unwrap();
     let db = mongodb_client.database("rust_bot");
     let collection: Collection<Question> = db.collection("questions");
-    let test = collection.list_index_names().await.unwrap();
-    for i in test {
-        println!("{:?}", i);
-    }
-
     let bot = Bot::from_env();
     let params = ConfigParameters {
         // TODO: get UserId from environment variable. (Don't forget about Docker). Use docker
@@ -86,6 +82,7 @@ async fn main() {
         .enter_dialogue::<Message, InMemStorage<State>, State>()
         .branch(dptree::case![State::StartQuest].endpoint(receive_question))
         .branch(dptree::case![State::StartAns].endpoint(receive_answer))
+        .branch(dptree::case![State::ReceiveQuest { tg_id, id }].endpoint(handle_question))
         .branch(dptree::case![State::ReceiveAns { to }].endpoint(handle_answer))
         .branch(
             dptree::filter(|cfg: ConfigParameters, msg: Message| {
@@ -99,7 +96,7 @@ async fn main() {
         .branch(
             dptree::filter(|cfg: ConfigParameters, msg: Message| {
                 msg.from()
-                    .map(|user| user.id != UserId(0))
+                    .map(|user| user.id != cfg.bot_owner)
                     .unwrap_or_default()
             })
             .filter_command::<UserCommands>()
@@ -183,6 +180,29 @@ async fn admin_command_handler(
     Ok(())
 }
 
+async fn handle_question(
+    bot: Bot,
+    dialogue: SimpleDialouge,
+    (quest, tg_id, id): (String, String, i64),
+    msg: Message,
+    col: Collection<Question>,
+) -> Result<(), teloxide::RequestError> {
+    // TODO: finish writing
+    let res = Question {
+        question: quest,
+        tg_id: tg_id,
+        id: id,
+        answered: false,
+        upload_time: DateTime::now(),
+    };
+    let res = upload_question(res, col).await;
+    match res {
+        Ok(()) => "Ваш вопрос отправлен, бабубэ бубэ бубэээ",
+        Err(e) => "Чота фигня",
+    };
+    Ok(())
+}
+
 async fn handle_answer(
     bot: Bot,
     dialogue: SimpleDialouge,
@@ -255,7 +275,6 @@ async fn receive_question(
     bot: Bot,
     dialogue: SimpleDialouge,
     msg: Message,
-    col: Collection<Question>,
 ) -> Result<(), teloxide::RequestError> {
     let text = msg.text().unwrap();
     // TODO: send message to redis;
@@ -267,22 +286,8 @@ async fn receive_question(
         .await;
     match res {
         Ok(()) => {
-            let tg_id = msg.from().unwrap().username.clone().unwrap();
-            bot.send_message(msg.chat.id, text).await?;
-            let res = Question {
-                question: text.to_string(),
-                tg_id,
-                id: msg.chat.id.0,
-                answered: false,
-                upload_time: DateTime::now(),
-            };
-            println!("{:?}", res.tg_id);
-            let st = upload_question(res, col).await;
-            let ans = match st {
-                Ok(()) => "Ваш вопрос отправлен, бабубэ бубэ бубэээ",
-                Err(e) => "Чота фигня",
-            };
-            bot.send_message(msg.chat.id, ans).await?;
+            bot.send_message(msg.chat.id, msg.from().unwrap().username.clone().unwrap())
+                .await?;
         }
         Err(e) => {
             bot.send_message(msg.chat.id, "ЧЗХ").await?;
