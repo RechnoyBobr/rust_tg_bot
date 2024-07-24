@@ -6,7 +6,6 @@
 
 use funcs::{load_questions, upload_question, Question};
 use mongodb::{bson::DateTime, Client, Collection};
-use std::cell::Cell;
 use teloxide::{
     dispatching::{dialogue::InMemStorage, HandlerExt, UpdateFilterExt},
     prelude::*,
@@ -19,6 +18,7 @@ type SimpleDialouge = Dialogue<State, InMemStorage<State>>;
 #[derive(Clone)]
 struct ConfigParameters {
     bot_owner: UserId,
+    owner_username: Option<String>,
 }
 
 #[derive(BotCommands, Clone)]
@@ -61,11 +61,6 @@ enum AdminCommands {
     AnswerStart,
 }
 
-const PARAMS: ConfigParameters = ConfigParameters {
-    // TODO: get UserId from environment variable. (Don't forget about Docker). Use docker
-    // secrets.
-    bot_owner: UserId(471831737),
-};
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
@@ -83,9 +78,16 @@ async fn main() {
     }
 
     let bot = Bot::from_env();
+    let params = ConfigParameters {
+        // TODO: get UserId from environment variable. (Don't forget about Docker). Use docker
+        // secrets.
+        bot_owner: UserId(471831737),
+        owner_username: None,
+    };
     let handler = Update::filter_message()
         .enter_dialogue::<Message, InMemStorage<State>, State>()
         .branch(dptree::case![State::StartQuest].endpoint(receive_question))
+        .branch(dptree::case![State::StartAns].endpoint(receive_answer))
         .branch(dptree::case![State::ReceiveAns { to }].endpoint(handle_answer))
         .branch(
             dptree::filter(|cfg: ConfigParameters, msg: Message| {
@@ -107,7 +109,7 @@ async fn main() {
         );
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![
-            PARAMS,
+            params,
             InMemStorage::<State>::new(),
             collection
         ])
@@ -130,7 +132,7 @@ async fn user_command_handler(
     cmd: UserCommands,
 ) -> Result<(), teloxide::RequestError> {
     let text = match cmd {
-        UserCommands::Start => "Приветствую вас в своём мега-крутом ботеее!",
+        UserCommands::Start => "S1",
         UserCommands::AskStart => {
             dialogue.update(State::StartQuest).await.unwrap();
             "Задайте ваш вопрос"
@@ -153,68 +155,40 @@ async fn admin_command_handler(
         AdminCommands::Show => {
             // TODO: load array of messages
             let mut v: Vec<Question> = vec![];
-            let load_result = load_questions(client, &mut v).await;
-            match load_result {
+            let load_result = load_questions(10, client, &mut v).await;
+            let ret_val = match load_result {
                 Ok(()) => {
                     dialogue.update(State::Show { array: v, cur: 0 }).await;
-                    if let State::Show { array, cur } = dialogue.get().await.unwrap().unwrap() {
-                        format_question(&array, cur, array.len())
-                    } else {
-                        String::from("Невозможно")
-                    }
+                    format!("Вопрос от: {} \n {}", v[0].tg_id, v[0].question)
                 }
                 Err(e) => {
                     println!("{:?}", e.to_string());
-                    String::from(
-                        "Произошла ошибка при загрузке вопросов. Обратитесь к разработчику",
-                    )
+                    String::from("Произошла ошибка, обратитесь к разработчику. Код ошибки: A01")
                 }
-            }
+            };
+            ret_val
         }
         AdminCommands::Load => {
             // get_Comments()
             String::from("...")
         }
         AdminCommands::Next => {
-            if let State::Show { array, cur } = dialogue.get().await.unwrap().unwrap() {
-                let ret_val = format_question(&array, (cur + 1) % array.len(), array.len());
-                dialogue
-                    .update(State::Show {
-                        cur: (cur + 1) % array.len(),
-                        array,
-                    })
-                    .await;
-                ret_val
-            } else {
-                String::from("Сначала надо кнопочку show нажать")
-            }
+            // next()
+            String::from("... next")
         }
         AdminCommands::AnswerStart => {
             let cur_state = dialogue.get().await.unwrap().unwrap();
-            if let State::Show { array, cur } = cur_state {
-                dialogue
-                    .update(State::StartAns {
-                        q: array[cur].clone(),
-                    })
-                    .await;
-                String::from("Напишите ответ в сообщении ниже, он будет отправлен")
+            if let State::Show {array, cur } = cur_state {
+                dialogue.update(State::Show {
+                    array: cur_state.,
+                    cur: (cur_state.1 + 1) % 10,
+                });
             } else {
-                String::from("Нет вопроса, на который нужно ответить")
             }
         }
         AdminCommands::Previous => {
-            if let State::Show { array, cur } = dialogue.get().await.unwrap().unwrap() {
-                let ret_val = format_question(&array, (cur - 1) % array.len(), array.len());
-                dialogue
-                    .update(State::Show {
-                        cur: (cur - 1) % array.len(),
-                        array,
-                    })
-                    .await;
-                ret_val
-            } else {
-                String::from("Сначала надо кнопочку show нажать")
-            }
+            // get_previous()
+            String::from("...")
         }
     };
     bot.send_message(msg.chat.id, text).await?;
@@ -288,12 +262,7 @@ async fn receive_answer(
     }
     Ok(())
 }
-fn format_question(array: &[Question], cur: usize, vec_size: usize) -> String {
-    format!(
-        "Вопрос {}/{} от @{} \n {}",
-        cur, vec_size, array[cur].tg_id, array[cur].question
-    )
-}
+
 async fn receive_question(
     bot: Bot,
     dialogue: SimpleDialouge,
@@ -320,24 +289,15 @@ async fn receive_question(
                 upload_time: DateTime::now(),
             };
             println!("{:?}", res.tg_id);
-            bot.send_message(
-                PARAMS.bot_owner,
-                format!("Вам пришёл новый вопрос от @{} \n {}", res.tg_id, text),
-            )
-            .await;
             let st = upload_question(res, col).await;
             let ans = match st {
-                Ok(()) => "Ваш вопрос отправлен!",
-                Err(e) => "Произошла ошибка при загрузке сообщения в БД, сообщите программисту",
+                Ok(()) => "Ваш вопрос отправлен, бабубэ бубэ бубэээ",
+                Err(e) => "Чота фигня",
             };
             bot.send_message(msg.chat.id, ans).await?;
         }
         Err(e) => {
-            bot.send_message(
-                msg.chat.id,
-                "Произошла ошибка с teloxide api, сообщите программисту об этом",
-            )
-            .await?;
+            bot.send_message(msg.chat.id, "ЧЗХ").await?;
         }
     }
     Ok(())

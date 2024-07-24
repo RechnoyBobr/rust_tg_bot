@@ -24,20 +24,16 @@ pub struct Question {
 type QuestStorage = std::sync::Arc<ErasedStorage<Question>>;
 
 pub async fn load_questions(
-    quantity: u8,
     collection: mongodb::Collection<Question>,
     res: &mut Vec<Question>,
 ) -> std::result::Result<(), mongodb::error::Error> {
     let filter = doc! {"answered": false};
-    let filter_options = FindOptions::builder().sort(doc! {"answered": 1}).build();
+    let filter_options = FindOptions::builder()
+        .sort(doc! {"answered": 1, "upload_time": -1})
+        .build();
     let mut doc_ptr = collection.find(filter, filter_options).await?;
-    let mut cnt = 0;
     while let Some(quest) = doc_ptr.try_next().await? {
-        if cnt == quantity {
-            break;
-        }
         res.push(quest);
-        cnt += 1;
     }
     Ok(())
 }
@@ -45,6 +41,7 @@ pub async fn upload_question(
     question: Question,
     collection: mongodb::Collection<Question>,
 ) -> Result<(), mongodb::error::Error> {
-    collection.insert_one(question, None).await?;
+    let res = collection.insert_one(question, None).await?;
+    println!("Inserted to collection with id: {:?}", res.inserted_id);
     Ok(())
 }
