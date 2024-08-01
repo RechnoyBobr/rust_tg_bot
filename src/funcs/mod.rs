@@ -1,17 +1,9 @@
 use futures::stream::TryStreamExt;
 use mongodb::{
-    bson::{doc, DateTime, Document},
+    bson::{doc, DateTime},
     options::FindOptions,
 };
 use serde::{Deserialize, Serialize};
-use teloxide::{
-    dispatching::dialogue::{
-        serializer::{Bincode, Json},
-        ErasedStorage, RedisStorage, Storage,
-    },
-    prelude::*,
-    utils::command::BotCommands,
-};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Question {
@@ -21,8 +13,6 @@ pub struct Question {
     pub answered: bool,
     pub upload_time: DateTime,
 }
-type QuestStorage = std::sync::Arc<ErasedStorage<Question>>;
-
 pub async fn load_questions(
     collection: mongodb::Collection<Question>,
     res: &mut Vec<Question>,
