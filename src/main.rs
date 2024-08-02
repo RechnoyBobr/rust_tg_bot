@@ -1,9 +1,10 @@
 // TODO: GLOBAL:
 // Show state should receieve vector of questions.
 
-use funcs::{load_questions, upload_question, Question};
+use funcs::{check_blacklist, load_questions, upload_question, Question};
+use mongodb::options::InsertOneOptions;
 use mongodb::{
-    bson::{doc, to_document, DateTime},
+    bson::{doc, to_document, DateTime, Document},
     options::UpdateOptions,
     Client, Collection,
 };
@@ -58,6 +59,7 @@ enum AdminCommands {
     Show,
     Previous,
     Next,
+    Ban,
     Answer,
 }
 #[tokio::main]
@@ -73,6 +75,7 @@ async fn main() {
     let mongodb_client = Client::with_uri_str(mongodb_uri).await.unwrap();
     let db = mongodb_client.database("rust_bot");
     let collection: Collection<Question> = db.collection("questions");
+    let ban_list: Collection<Document> = db.collection("blacklist");
     let params: ConfigParameters = ConfigParameters {
         // TODO: get UserId from environment variable. (Don't forget about Docker). Use docker
         // secrets.
@@ -94,7 +97,8 @@ async fn main() {
         .dependencies(dptree::deps![
             params,
             InMemStorage::<State>::new(),
-            collection
+            collection,
+            ban_list
         ])
         .default_handler(|upd| async move {
             log::warn!("Unhandled update: {:?}", upd);
@@ -180,7 +184,7 @@ async fn user_start(
 ) -> Result<(), teloxide::RequestError> {
     let text = match cmd {
         UserCommands::Start => String::from("Добро пожаловать"),
-        _ => String::from("Ты как это сделал😳"),
+        _ => String::from("Данный бот поддерживает только команду /start, всё остальное делается с помощью кнопок"),
     };
     bot.send_message(msg.chat.id, text)
         .reply_markup(make_user_keyboard(dialogue.get().await.unwrap().unwrap()))
@@ -207,12 +211,12 @@ async fn admin_command_handler(
     dialogue: SimpleDialouge,
     client: mongodb::Collection<Question>,
     q: CallbackQuery,
+    ban_list: Collection<Document>,
 ) -> Result<(), teloxide::RequestError> {
     let cmd = AdminCommands::parse(&q.data.unwrap(), BOT_NAME).unwrap();
     let text = match cmd {
         AdminCommands::Start => String::from("Добро пожаловать"),
         AdminCommands::Show => {
-            // TODO: load array of messages
             let mut v: Vec<Question> = vec![];
             let load_result = load_questions(client, &mut v).await;
             if v.is_empty() {
@@ -250,6 +254,35 @@ async fn admin_command_handler(
                 String::from("Сначала надо кнопочку show нажать")
             }
         }
+        AdminCommands::Ban => {
+            let opts = InsertOneOptions::builder().build();
+            let cur_state = dialogue.get().await.unwrap().unwrap();
+            if let State::Show { array, cur } = cur_state {
+                let tg: String = array[cur].tg_id.clone();
+                ban_list
+                    .insert_one(doc!["tg_id": tg], opts)
+                    .await
+                    .expect("Panic!");
+                dialogue
+                    .update(State::Start)
+                    .await
+                    .expect("Стейт не обновился!");
+                "Успешно забанен!".to_owned()
+            } else if let State::ReceiveQuest { question } = cur_state {
+                let tg: String = question.tg_id.clone();
+                ban_list
+                    .insert_one(doc!["tg_id": tg], opts)
+                    .await
+                    .expect("Panic!");
+                dialogue
+                    .update(State::Start)
+                    .await
+                    .expect("Стейт не обновился!");
+                "Успешно забанен!".to_owned()
+            } else {
+                "Некого банить!".to_owned()
+            }
+        }
         AdminCommands::Answer => {
             let cur_state = dialogue.get().await.unwrap().unwrap();
             if let State::Show { array, cur } = cur_state {
@@ -264,7 +297,10 @@ async fn admin_command_handler(
                 }
             } else if let State::ReceiveQuest { question } = dialogue.get().await.unwrap().unwrap()
             {
-                dialogue.update(State::ReceiveAns { question }).await;
+                dialogue
+                    .update(State::ReceiveAns { question })
+                    .await
+                    .expect("Стейт не обновился!!");
                 String::from("Напишите Ответ в сообщении ниже, он будет отправлен")
             } else {
                 String::from("Нет вопроса, на который нужно ответить")
@@ -272,14 +308,25 @@ async fn admin_command_handler(
         }
         AdminCommands::Previous => {
             if let State::Show { array, cur } = dialogue.get().await.unwrap().unwrap() {
-                let ret_val = format_question(&array, (cur - 1) % array.len(), array.len());
-                let _ = dialogue
-                    .update(State::Show {
-                        cur: (cur - 1) % array.len(),
-                        array,
-                    })
-                    .await;
-                ret_val
+                if cur == 0 {
+                    let ret_val = format_question(&array, array.len() - 1, array.len());
+                    let _ = dialogue
+                        .update(State::Show {
+                            cur: array.len() - 1,
+                            array,
+                        })
+                        .await;
+                    ret_val
+                } else {
+                    let ret_val = format_question(&array, (cur - 1) % array.len(), array.len());
+                    let _ = dialogue
+                        .update(State::Show {
+                            cur: (cur - 1) % array.len(),
+                            array,
+                        })
+                        .await;
+                    ret_val
+                }
             } else {
                 String::from("Сначала надо кнопочку show нажать")
             }
@@ -303,12 +350,14 @@ fn make_keyboard(state: State) -> InlineKeyboardMarkup {
             vec![vec![
                 InlineKeyboardButton::callback("⬅️", "/previous"),
                 InlineKeyboardButton::callback("Ответить", "/answer"),
+                InlineKeyboardButton::callback("Забанить", "/ban"),
                 InlineKeyboardButton::callback("➡️", "/next"),
             ]]
         }
         State::ReceiveQuest { question: _ } => {
             vec![vec![
                 InlineKeyboardButton::callback("Ответить", "/answer"),
+                InlineKeyboardButton::callback("Забанить", "/ban"),
                 InlineKeyboardButton::callback("Просмотреть все вопросы", "/show"),
             ]]
         }
@@ -357,7 +406,10 @@ async fn handle_answer(
             return Ok(());
         }
     };
-    dialogue.update(State::Start).await;
+    dialogue
+        .update(State::Start)
+        .await
+        .expect("Стейт не обновился!!");
     bot.send_message(msg.chat.id, "Ваш ответ отправлен")
         .reply_markup(make_keyboard(dialogue.get().await.unwrap().unwrap()))
         .await?;
@@ -399,46 +451,70 @@ async fn receive_question(
     dialogue: SimpleDialouge,
     msg: Message,
     col: Collection<Question>,
+    ban_list: Collection<Document>,
     params: ConfigParameters,
+
     storage: MyStorage,
 ) -> Result<(), teloxide::RequestError> {
     let text = msg.text().unwrap();
     // TODO: send message to redis;
     let tg_id = msg.from().unwrap().username.clone().unwrap();
-    let res = Question {
-        question: text.to_string(),
-        tg_id: tg_id.clone(),
-        id: msg.chat.id.0,
-        answered: false,
-        upload_time: DateTime::now(),
-    };
-    let st = upload_question(res.clone(), col).await;
-    let ans = match st {
-        Ok(()) => {
-            InMemStorage::update_dialogue(
-                storage.clone(),
-                params.chat_id,
-                State::ReceiveQuest { question: res },
-            )
-            .await;
-            bot.send_message(
-                params.bot_owner,
-                format!("Вам пришёл новый вопрос от @{} \n {}", tg_id, text),
-            )
-            .reply_markup(make_keyboard(
-                InMemStorage::get_dialogue(storage, params.chat_id)
-                    .await
-                    .unwrap()
-                    .unwrap(),
-            ))
-            .await?;
-            "Ваш вопрос отправлен!"
-        }
-        Err(_e) => "Произошла ошибка при загрузке сообщения в БД, сообщите программисту",
-    };
-    dialogue.update(State::Start).await;
-    bot.send_message(msg.chat.id, ans)
-        .reply_markup(make_user_keyboard(dialogue.get().await.unwrap().unwrap()))
+    let res = check_blacklist(ban_list, &tg_id).await;
+    let b = res.unwrap_or_else(|e| {
+        println!("Panic!!, {:?}", e);
+        true
+    });
+    if b {
+        dialogue
+            .update(State::Start)
+            .await
+            .expect("Стейт не обновился.");
+        bot.send_message(
+            msg.chat.id,
+            String::from("Вы были забанены за плохое поведение"),
+        )
         .await?;
+    } else {
+        let res = Question {
+            question: text.to_string(),
+            tg_id: tg_id.clone(),
+            id: msg.chat.id.0,
+            answered: false,
+            upload_time: DateTime::now(),
+        };
+        let st = upload_question(res.clone(), col).await;
+        let ans = match st {
+            Ok(()) => {
+                InMemStorage::update_dialogue(
+                    storage.clone(),
+                    params.chat_id,
+                    State::ReceiveQuest { question: res },
+                )
+                .await
+                .expect("Ошибка! Не был найден диалог владельца!");
+                bot.send_message(
+                    params.bot_owner,
+                    format!("Вам пришёл новый вопрос от @{} \n {}", tg_id, text),
+                )
+                .reply_markup(make_keyboard(
+                    InMemStorage::get_dialogue(storage, params.chat_id)
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                ))
+                .await?;
+                "Ваш вопрос отправлен!"
+            }
+            Err(_e) => "Произошла ошибка при загрузке сообщения в БД, сообщите программисту",
+        };
+
+        dialogue
+            .update(State::Start)
+            .await
+            .expect("Ошибка! Стейт не сбросился!");
+        bot.send_message(msg.chat.id, ans)
+            .reply_markup(make_user_keyboard(dialogue.get().await.unwrap().unwrap()))
+            .await?;
+    }
     Ok(())
 }

@@ -1,6 +1,6 @@
 use futures::stream::TryStreamExt;
 use mongodb::{
-    bson::{doc, DateTime},
+    bson::{doc, DateTime, Document},
     options::FindOptions,
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,18 @@ pub async fn load_questions(
         res.push(quest);
     }
     Ok(())
+}
+pub async fn check_blacklist(
+    collection: mongodb::Collection<Document>,
+    tg_id: &String,
+) -> std::result::Result<bool, mongodb::error::Error> {
+    let filter = doc! {"tg_id": tg_id};
+    let filter_options = FindOptions::builder().build();
+    let mut doc_ptr = collection.find(filter, filter_options).await?;
+    if let Some(_id) = doc_ptr.try_next().await? {
+        return Ok(true);
+    }
+    Ok(false)
 }
 pub async fn upload_question(
     question: Question,
