@@ -2,24 +2,13 @@ services:
   rust_bot:
     build: ./
 
-  mongdob:
+  mongodb:
     image: mongo
     container_name: mongodb
     restart: always
     environment:
-      MONGODB_INITDB_ROOT_USERNAME: $MONGODB_USERNAME
-      MONGODB_INITDB_ROOT_PASSWORD: $MONGODB_PASSWORD
-      MONGODB_INITDB_DATABASE: main
+      MONGODB_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME}
+      MONGODB_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+      MONGODB_INITDB_DATABASE: rust_bot
     ports:
       - 27017:27017
-
-  mongodb_seed:
-    image: mongo
-    container_name: mongodb-seed
-    depends_on:
-      - mongodb
-    volumes:
-      - ./mongodb-init:/mongodb-init
-    links:
-      - mongodb
-    command: mongoimport --host mongodb --db main --collection questions --authenticatonDatabase admin --username $MONGODB_USERNAME --password $MONGODB_PASSWORD --drop --jsonArray --file /mongodb-init/init.json
