@@ -414,7 +414,7 @@ async fn handle_answer(
         .update(State::Start)
         .await
         .expect("Стейт не обновился!!");
-    bot.send_message(msg.chat.id, "")
+    bot.send_message(msg.chat.id, "Ваш ответ успешно отправлен")
         .reply_markup(make_keyboard(dialogue.get().await.unwrap().unwrap()))
         .await?;
     bot.send_message(ChatId(quest.id), "Вам пришёл ответ на ваше сообщение:")
