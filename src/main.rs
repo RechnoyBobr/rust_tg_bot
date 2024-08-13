@@ -164,7 +164,8 @@ async fn user_command_handler(
 ) -> Result<(), teloxide::RequestError> {
     let cmd = UserCommands::parse(&q.data.unwrap(), BOT_NAME).unwrap();
     let text = match cmd {
-        UserCommands::Start => "Приветствую вас в своём мега-крутом ботеее!".to_owned(),
+        UserCommands::Start => "Добрый день! Это бот обратной связи канала ['Юля пишет про маркетинг'](https://t.me/julaila_marketing). Здесь вы можете задать свой вопрос для анонимного разбора или оставить обратную связь о канале. \n \n
+Если ваш вопрос подразумевает разбор вашей стратегии продвижения / помощь с продвижением вашего проекта, то он подходит только для формата консультации https://schepetkina.ru/konsultacia".to_owned(),
         UserCommands::Ask => {
             dialogue.update(State::StartQuest).await.unwrap();
             "Задайте ваш вопрос".to_owned()
@@ -410,9 +411,12 @@ async fn handle_answer(
         .update(State::Start)
         .await
         .expect("Стейт не обновился!!");
-    bot.send_message(msg.chat.id, "Ваш ответ отправлен")
-        .reply_markup(make_keyboard(dialogue.get().await.unwrap().unwrap()))
-        .await?;
+    bot.send_message(
+        msg.chat.id,
+        "Получила ваш вопрос, спасибо. Отвечу на него в течение дня",
+    )
+    .reply_markup(make_keyboard(dialogue.get().await.unwrap().unwrap()))
+    .await?;
     bot.send_message(ChatId(quest.id), "Вам пришёл ответ на ваше сообщение:")
         .await?;
     bot.send_message(ChatId(quest.id), msg.text().unwrap())
