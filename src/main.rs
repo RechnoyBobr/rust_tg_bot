@@ -185,10 +185,12 @@ async fn user_start(
     cmd: UserCommands,
 ) -> Result<(), teloxide::RequestError> {
     let text = match cmd {
-        UserCommands::Start => String::from("Добро пожаловать"),
+        UserCommands::Start => String::from("Добрый день! Это бот обратной связи канала ['Юля пишет про маркетинг'] (https://t.me/julaila_marketing). Здесь вы можете задать свой вопрос для анонимного разбора или оставить обратную связь о канале. \n \n
+Если ваш вопрос подразумевает разбор вашей стратегии продвижения / помощь с продвижением вашего проекта, то он подходит только для формата консультации https://schepetkina.ru/konsultacia"),
         _ => String::from("Данный бот поддерживает только команду /start, всё остальное делается с помощью кнопок"),
     };
     bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(make_user_keyboard(dialogue.get().await.unwrap().unwrap()))
         .await?;
     Ok(())
